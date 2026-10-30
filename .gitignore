@@ -1,0 +1,11 @@
+/target/
+/horizon-offline.exe
+/horizon-launcher.exe
+/.local/
+/Horizon Offline Data/
+/Horizon Rust Data/
+/horizon-rust.json
+/horizon-offline.log
+/horizon-rust-launcher.log
+/.options-backups/
+*.tmp
