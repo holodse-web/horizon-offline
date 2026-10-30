@@ -1,6 +1,7 @@
-* text=auto
+* text=auto eol=lf
 *.rs text eol=lf
 *.md text eol=lf
 *.ps1 text eol=crlf
 *.png binary
 *.ico binary
+assets/THIRD_PARTY_LICENSES.txt linguist-generated=true

@@ -7,7 +7,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read},
     path::{Component, Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -458,11 +458,11 @@ pub(super) fn install(
         .max()
         .map(|(_, tag)| tag);
     let run = |command: &mut Command| -> Result<(), String> {
-        let status = command
-            .args(["install", tag])
-            .stdin(Stdio::null())
-            .status()
-            .map_err(failure)?;
+        let status = crate::ui::run_command(
+            command.args(["install", tag]),
+            "Скачивание и проверка клиента Horizon",
+        )
+        .map_err(|error| failure(format!("Не удалось установить Horizon {tag}: {error}")))?;
         if status.success() {
             Ok(())
         } else {
@@ -493,14 +493,19 @@ pub(super) fn install(
         .env("HORIZON_LAUNCHER_HOME", &staging)
         .env("HORIZON_HOME", staging.join("game")))
     .and_then(|()| {
-        patch(
+        let task = crate::ui::Task::new("Сравнение и замена изменённых файлов");
+        let result = patch(
             &versions,
             base,
             tag,
             &staging.join("versions").join(tag),
             &work,
         )
-        .map_err(failure)
+        .map_err(failure);
+        if result.is_ok() {
+            task.finish();
+        }
+        result
     });
     // This is always the private staging child of our own transaction, never a game directory.
     if staging.parent() == Some(work.as_path()) && staging.exists() {

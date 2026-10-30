@@ -31,6 +31,7 @@ foreach ($key in @('HORIZON_HOME','HORIZON_LAUNCHER_HOME','XDG_DATA_HOME','XDG_C
     $start.EnvironmentVariables[$key] = Join-Path $scratch $key
 }
 $start.EnvironmentVariables['HORIZON_LAUNCHER_NO_SELF_UPDATE'] = '1'
+$start.EnvironmentVariables['HORIZON_OFFLINE_NO_UPDATE'] = '1'
 $start.EnvironmentVariables['HORIZON_RUST_STANDALONE'] = '1'
 $start.EnvironmentVariables['HORIZON_NO_AUDIO'] = '1'
 $start.EnvironmentVariables['NO_COLOR'] = '1'

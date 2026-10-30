@@ -3,7 +3,7 @@
 Horizon Offline includes code derived from Horizon, copyright 2026 Ludovic Marie
 and the Horizon contributors, under the MIT license in `LICENSE`.
 
-The unmodified `horizon-launcher.exe` is Horizon's original launcher, version 0.2.27.
+The unmodified `horizon-launcher.exe` is Horizon's original launcher, version 0.2.28.
 Its upstream source is https://github.com/horizon-rust/horizon/tree/main/launcher.
 
 The original launcher includes the following upstream assets and components:
@@ -34,4 +34,10 @@ Rust dependencies for this wrapper are recorded in `Cargo.lock`.
 - zmij 1.0.23: MIT; `licenses/zmij-LICENSE-MIT.txt`.
 
 Original horizon-launcher.exe SHA-256:
-`E038314982E21CD7A2010ADB767C86C7017F12108D961488F26703DF362B5494`.
+`EF901348E259C39C83B8D246ECC92CCDEB4134AA07390777550799F2CFE63499`.
+
+Program updates use GitHub release SHA-256 digests over HTTPS. Official Horizon
+launcher updates also verify its tag-bound Ed25519 signature using Horizon's
+embedded public release key. The verification format is derived from Horizon's
+MIT-licensed horizon-release-sign crate. Additional wrapper dependency notices
+are embedded in assets/THIRD_PARTY_LICENSES.txt and available via --licenses.

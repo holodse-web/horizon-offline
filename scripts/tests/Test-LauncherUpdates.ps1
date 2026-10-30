@@ -123,6 +123,7 @@ foreach ($layout in @('standalone', 'package')) {
         $start.EnvironmentVariables['HORIZON_FIXTURE_HOME'] = $data
         $start.EnvironmentVariables['HORIZON_FIXTURE_MODE'] = $mode
         $start.EnvironmentVariables['HORIZON_LAUNCHER_NO_SELF_UPDATE'] = '1'
+$start.EnvironmentVariables['HORIZON_OFFLINE_NO_UPDATE'] = '1'
         $start.EnvironmentVariables['HORIZON_RUST_STANDALONE'] = '0'
         $start.EnvironmentVariables['HORIZON_NO_AUDIO'] = '1'
         $start.EnvironmentVariables['NO_COLOR'] = '1'

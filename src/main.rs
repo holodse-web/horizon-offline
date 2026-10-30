@@ -2,6 +2,8 @@
 //! No Java game and no fallback route.
 mod incremental;
 mod minecraft_settings;
+mod ui;
+mod updater;
 use serde_json::{Value, json};
 use std::{
     ffi::OsString,
@@ -12,7 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const VERSION: &str = "0.7.2";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 const SETTINGS_FILE: &str = "horizon-rust.json";
 
 type Rgb = (u8, u8, u8);
@@ -31,6 +33,10 @@ struct Options {
     check: bool,
     menu: bool,
     help: bool,
+    version: bool,
+    licenses: bool,
+    no_update: bool,
+    updates_check: bool,
     prepare: bool,
     forwarded: Vec<OsString>,
 }
@@ -41,6 +47,10 @@ fn parse(args: impl IntoIterator<Item = OsString>, interactive: bool) -> Result<
         check: false,
         menu: false,
         help: false,
+        version: false,
+        licenses: false,
+        no_update: false,
+        updates_check: false,
         prepare: true,
         forwarded: Vec::new(),
     };
@@ -70,6 +80,13 @@ fn parse(args: impl IntoIterator<Item = OsString>, interactive: bool) -> Result<
                 explicit = true;
             }
             Some("--help" | "-h") => options.help = true,
+            Some("--version" | "-V") => options.version = true,
+            Some("--licenses") => options.licenses = true,
+            Some("--no-update") => options.no_update = true,
+            Some("--updates-check") => {
+                options.updates_check = true;
+                explicit = true;
+            }
             _ => {
                 options.forwarded.push(arg);
                 explicit = true;
@@ -296,11 +313,7 @@ impl Standalone {
 
     fn run_official(&self, args: &[String]) -> Result<(), String> {
         fs::create_dir_all(&self.data).map_err(|e| e.to_string())?;
-        let status = self
-            .command()
-            .args(args)
-            .status()
-            .map_err(|e| e.to_string())?;
+        let status = ui::run_command(self.command().args(args), "Подготовка ресурсов Minecraft")?;
         if status.success() {
             Ok(())
         } else {
@@ -316,10 +329,7 @@ impl Standalone {
     }
 
     fn prepare(&self, settings: &Settings) -> Result<(), String> {
-        println!(
-            "\n  Готовлю ресурсы из твоих файлов Minecraft 26.3. Это один раз, несколько минут."
-        );
-        println!("  Окно может молчать, это нормально.\n");
+        println!("\n  Ресурсы Minecraft 26.3 · первая подготовка может занять несколько минут.");
         let mut args = vec!["prepare".to_string()];
         if let Some(dir) = &settings.minecraft_dir {
             args.push("--minecraft".into());
@@ -595,18 +605,20 @@ fn official_json(command: &mut Command, timeout: Duration) -> Result<Value, Stri
 
 /// Downloads only a missing version; signature checks remain in the original launcher.
 fn install_client(make_command: impl Fn() -> Command) -> Result<InstallOutcome, String> {
-    println!("\n  Проверяю обновления Horizon…");
     incremental::recover_pending(&make_command())?;
-    update_client(
+    let mut checking = Some(ui::Task::new("Клиент Horizon · проверка версии"));
+    let result = update_client(
         |args| {
             official_json(make_command().args(args), Duration::from_secs(30))
                 .map_err(|e| format!("Не удалось проверить версии Horizon: {e}"))
         },
         |tag, installed| {
+            if let Some(task) = checking.take() {
+                task.finish();
+            }
             println!(
                 "\n  Скачиваю Horizon {tag} (подпись проверяет официальный horizon-launcher)."
             );
-            println!("  Подожди завершения установки…\n");
             if let Some(summary) = incremental::install(&make_command, tag, installed)? {
                 println!(
                     "  Файлы: без изменений — {}, заменено — {}, добавлено — {}, удалено устаревших — {}.",
@@ -620,7 +632,13 @@ fn install_client(make_command: impl Fn() -> Command) -> Result<InstallOutcome, 
             }
             Ok(())
         },
-    )
+    );
+    if let Some(task) = checking {
+        if result.is_ok() {
+            task.finish();
+        }
+    }
+    result
 }
 
 fn install_runtime(root: &Path) -> Result<InstallOutcome, String> {
@@ -916,7 +934,7 @@ fn status_panel(st: &Style, settings: &Settings, probe: &Probe) -> String {
 fn menu_text(st: &Style, settings: &Settings) -> String {
     let key = |k: &str| st.bold(VIOLET, &format!("[{k}]"));
     format!(
-        "  {} {}  {}\n\n  {} Ник игрока            {} Папка Minecraft\n  {} Проверить файлы       {} Папка игры\n  {} Установить / обновить Horizon\n  {} Импортировать настройки Minecraft\n\n  {} Выход                {}\n",
+        "  {} {}  {}\n\n  {} Ник игрока            {} Папка Minecraft\n  {} Проверить файлы       {} Папка игры\n  {} Установить / обновить Horizon\n  {} Импортировать настройки Minecraft\n  {} Обновления программы и лаунчера\n\n  {} Выход                {}\n",
         key("1"),
         st.bold(WHITE, "► ИГРАТЬ"),
         st.fg(GRAY, &format!("как {}", settings.name)),
@@ -926,6 +944,7 @@ fn menu_text(st: &Style, settings: &Settings) -> String {
         key("5"),
         key("6"),
         key("7"),
+        key("8"),
         key("0"),
         st.fg(GRAY, "Enter — играть"),
     )
@@ -1135,7 +1154,7 @@ fn open_folder(path: &Path) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-fn menu(root: &Path, st: &Style) -> Result<bool, String> {
+fn menu(root: &Path, st: &Style, mut updates: Vec<String>) -> Result<bool, String> {
     let mut probe: Option<Result<Report, String>> = None;
     // Folder-of-exes mode checks only files, so it is always shown. In script mode the menu opens
     // at once and the slow PowerShell check runs only on request (item 3).
@@ -1154,14 +1173,18 @@ fn menu(root: &Path, st: &Style) -> Result<bool, String> {
             }
         }
         clear();
-        println!("\n{}", banner(st));
+        print!("\n{}", banner(st));
         let shown = match &probe {
             None => Probe::Skipped,
             Some(Err(e)) => Probe::Failed(e),
             Some(Ok(r)) => Probe::Done(r),
         };
-        println!("{}", status_panel(st, &settings, &shown));
-        println!("{}", menu_text(st, &settings));
+        print!("{}", status_panel(st, &settings, &shown));
+        for line in &updates {
+            println!("  {}", st.fg(GRAY, line));
+        }
+        println!();
+        print!("{}", menu_text(st, &settings));
         let Some(choice) = prompt("\n  Выбери [1]: ") else {
             return Ok(true);
         };
@@ -1295,11 +1318,18 @@ fn menu(root: &Path, st: &Style) -> Result<bool, String> {
                     return Ok(true);
                 }
             }
+            "8" => {
+                let result = updater::run(root, true);
+                if result.restarted {
+                    return Ok(true);
+                }
+                updates = result.messages;
+            }
             "0" | "q" | "Q" => return Ok(true),
             _ => {
                 println!(
                     "  {}",
-                    st.fg(YELLOW, "Введи номер 1–7 или 0. Enter — играть.")
+                    st.fg(YELLOW, "Введи номер 1–8 или 0. Enter — играть.")
                 );
                 if !pause() {
                     return Ok(true);
@@ -1338,24 +1368,74 @@ fn check(root: &Path, options: &Options, settings: &Settings, st: &Style) -> Res
 fn run() -> Result<bool, String> {
     let options = parse(
         std::env::args_os().skip(1),
-        io::stdin().is_terminal() && io::stdout().is_terminal(),
+        io::stdin().is_terminal() && terminal_output(),
     )?;
     let st = Style {
         color: terminal_output() && std::env::var_os("NO_COLOR").is_none() && enable_vt(),
     };
+    if options.version {
+        println!("horizon-offline {VERSION}");
+        return Ok(true);
+    }
+    if options.licenses {
+        print!("{}", include_str!("../assets/THIRD_PARTY_LICENSES.txt"));
+        return Ok(true);
+    }
     if options.help {
         println!(
-            "HORIZON OFFLINE {VERSION} · by RRM Network\n\n  --rust       Start the native Rust client\n  --plan       Native preflight; no game\n  --check      Check files; no game\n  --menu       Terminal menu (default in a terminal)\n\nNickname and Minecraft folder are saved in {SETTINGS_FILE} beside the launcher.\nOnly the native Rust client is started. Fabric/Java mod JARs are not executed."
+            "HORIZON OFFLINE {VERSION} · by RRM Network\n\n  --rust          Start the native Rust client\n  --plan          Native preflight; no game\n  --check         Check files; no game\n  --menu          Terminal menu (default in a terminal)\n  --updates-check Check program versions without installing\n  --no-update     Skip automatic updates for this run\n  --version       Print program version\n  --licenses      Show all license notices\n\nNickname and Minecraft folder are saved in {SETTINGS_FILE} beside the launcher.\nOnly the native Rust client is started. Fabric/Java mod JARs are not executed."
         );
         return Ok(true);
     }
     let root = root()?;
+    if options.updates_check
+        && (options.no_update || std::env::var_os("HORIZON_OFFLINE_NO_UPDATE").is_some())
+    {
+        println!("  Проверка обновлений отключена.");
+        return Ok(true);
+    }
+    let mut updates = Vec::new();
+    if !options.no_update
+        && !options.check
+        && !options.plan
+        && std::env::var_os("HORIZON_OFFLINE_NO_UPDATE").is_none()
+    {
+        if options.menu {
+            ui::intro(&st);
+        }
+        let result = updater::run(&root, !options.updates_check);
+        if result.restarted {
+            return Ok(true);
+        }
+        updates = result.messages;
+        if options.updates_check {
+            for line in updates {
+                println!("  {line}");
+            }
+            return Ok(true);
+        }
+        if result.connected && standalone(&root).is_some_and(|s| s.installed().is_some()) {
+            match install_runtime(&root) {
+                Ok(outcome) => {
+                    if outcome.changed() {
+                        let mut settings = Settings::load(&root);
+                        settings.launch = None;
+                        settings.save(&root)?;
+                    }
+                    updates.push(outcome.message());
+                }
+                Err(error) => {
+                    updates.push(format!("Клиент Horizon: проверка недоступна · {error}"))
+                }
+            }
+        }
+    }
     let recovery_command = standalone(&root)
         .map(|s| s.command())
         .unwrap_or_else(|| Command::new("horizon-launcher.exe"));
     incremental::recover_pending(&recovery_command)?;
     if options.menu {
-        return menu(&root, &st);
+        return menu(&root, &st, updates);
     }
     let mut settings = Settings::load(&root);
     let mut options = options;
